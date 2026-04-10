@@ -1,0 +1,186 @@
+--- a/packages/python/src/index.ts	2026-04-10 17:14:30
++++ b/packages/python/src/index.ts	2026-04-10 17:16:00
+@@ -15,12 +15,38 @@
+   env?: { [key: string]: string | undefined };
+ };
+ 
++/**
++ * Build a base environment for Python subprocesses.
++ *
++ * Filters out OTEL_* variables from the parent process environment to prevent
++ * Python libraries (e.g. mlflow, opentelemetry-sdk) from picking them up and
++ * producing verbose debug output to stderr.  In the managed Trigger.dev runtime
++ * stderr is a blocking IPC socket with a ~208 KB buffer — exceeding that limit
++ * permanently deadlocks the subprocess.
++ */
++function buildPythonEnv(userEnv?: { [key: string]: string | undefined }): NodeJS.ProcessEnv {
++  const carrier = carrierFromContext();
++
++  const filteredEnv = Object.fromEntries(
++    Object.entries(process.env).filter(([key]) => !key.startsWith("OTEL_"))
++  );
++
++  return {
++    ...filteredEnv,
++    ...userEnv,
++    TRACEPARENT: carrier["traceparent"],
++    OTEL_RESOURCE_ATTRIBUTES: `${
++      SemanticInternalAttributes.EXECUTION_ENVIRONMENT
++    }=trigger,${Object.entries(taskContext.attributes)
++      .map(([key, value]) => `${key}=${value}`)
++      .join(",")}`,
++  };
++}
++
+ export const python = {
+   async run(scriptArgs: string[] = [], options: PythonExecOptions = {}): Promise<Result> {
+     const pythonBin = process.env.PYTHON_BIN_PATH || "python";
+ 
+-    const carrier = carrierFromContext();
+-
+     return await logger.trace(
+       "python.run()",
+       async (span) => {
+@@ -28,16 +54,7 @@
+           ...options,
+           nodeOptions: {
+             ...(options.nodeOptions || {}),
+-            env: {
+-              ...process.env,
+-              ...options.env,
+-              TRACEPARENT: carrier["traceparent"],
+-              OTEL_RESOURCE_ATTRIBUTES: `${
+-                SemanticInternalAttributes.EXECUTION_ENVIRONMENT
+-              }=trigger,${Object.entries(taskContext.attributes)
+-                .map(([key, value]) => `${key}=${value}`)
+-                .join(",")}`,
+-            },
++            env: buildPythonEnv(options.env),
+           },
+           throwOnError: false, // Ensure errors are handled manually
+         });
+@@ -79,8 +96,6 @@
+       async (span) => {
+         span.setAttribute("scriptPath", scriptPath);
+ 
+-        const carrier = carrierFromContext();
+-
+         const result = await x(
+           process.env.PYTHON_BIN_PATH || "python",
+           [scriptPath, ...scriptArgs],
+@@ -88,17 +103,7 @@
+             ...options,
+             nodeOptions: {
+               ...(options.nodeOptions || {}),
+-              env: {
+-                ...process.env,
+-                ...options.env,
+-                TRACEPARENT: carrier["traceparent"],
+-                OTEL_RESOURCE_ATTRIBUTES: `${
+-                  SemanticInternalAttributes.EXECUTION_ENVIRONMENT
+-                }=trigger,${Object.entries(taskContext.attributes)
+-                  .map(([key, value]) => `${key}=${value}`)
+-                  .join(",")}`,
+-                OTEL_LOG_LEVEL: "DEBUG",
+-              },
++              env: buildPythonEnv(options.env),
+             },
+             throwOnError: false,
+           }
+@@ -143,23 +148,12 @@
+           async (tempFilePath) => {
+             span.setAttribute("tempFilePath", tempFilePath);
+ 
+-            const carrier = carrierFromContext();
+-
+             const pythonBin = process.env.PYTHON_BIN_PATH || "python";
+             const result = await x(pythonBin, [tempFilePath], {
+               ...options,
+               nodeOptions: {
+                 ...(options.nodeOptions || {}),
+-                env: {
+-                  ...process.env,
+-                  ...options.env,
+-                  TRACEPARENT: carrier["traceparent"],
+-                  OTEL_RESOURCE_ATTRIBUTES: `${
+-                    SemanticInternalAttributes.EXECUTION_ENVIRONMENT
+-                  }=trigger,${Object.entries(taskContext.attributes)
+-                    .map(([key, value]) => `${key}=${value}`)
+-                    .join(",")}`,
+-                },
++                env: buildPythonEnv(options.env),
+               },
+               throwOnError: false,
+             });
+@@ -194,22 +188,11 @@
+     run(scriptArgs: string[] = [], options: PythonExecOptions = {}): AsyncIterableStream<string> {
+       const pythonBin = process.env.PYTHON_BIN_PATH || "python";
+ 
+-      const carrier = carrierFromContext();
+-
+       const pythonProcess = x(pythonBin, scriptArgs, {
+         ...options,
+         nodeOptions: {
+           ...(options.nodeOptions || {}),
+-          env: {
+-            ...process.env,
+-            ...options.env,
+-            TRACEPARENT: carrier["traceparent"],
+-            OTEL_RESOURCE_ATTRIBUTES: `${
+-              SemanticInternalAttributes.EXECUTION_ENVIRONMENT
+-            }=trigger,${Object.entries(taskContext.attributes)
+-              .map(([key, value]) => `${key}=${value}`)
+-              .join(",")}`,
+-          },
++          env: buildPythonEnv(options.env),
+         },
+         throwOnError: false,
+       });
+@@ -241,22 +224,11 @@
+ 
+       const pythonBin = process.env.PYTHON_BIN_PATH || "python";
+ 
+-      const carrier = carrierFromContext();
+-
+       const pythonProcess = x(pythonBin, [scriptPath, ...scriptArgs], {
+         ...options,
+         nodeOptions: {
+           ...(options.nodeOptions || {}),
+-          env: {
+-            ...process.env,
+-            ...options.env,
+-            TRACEPARENT: carrier["traceparent"],
+-            OTEL_RESOURCE_ATTRIBUTES: `${
+-              SemanticInternalAttributes.EXECUTION_ENVIRONMENT
+-            }=trigger,${Object.entries(taskContext.attributes)
+-              .map(([key, value]) => `${key}=${value}`)
+-              .join(",")}`,
+-          },
++          env: buildPythonEnv(options.env),
+         },
+         throwOnError: false,
+       });
+@@ -286,22 +258,11 @@
+ 
+       const pythonScriptPath = createTempFileSync(`script_${Date.now()}.py`, scriptContent);
+ 
+-      const carrier = carrierFromContext();
+-
+       const pythonProcess = x(pythonBin, [pythonScriptPath], {
+         ...options,
+         nodeOptions: {
+           ...(options.nodeOptions || {}),
+-          env: {
+-            ...process.env,
+-            ...options.env,
+-            TRACEPARENT: carrier["traceparent"],
+-            OTEL_RESOURCE_ATTRIBUTES: `${
+-              SemanticInternalAttributes.EXECUTION_ENVIRONMENT
+-            }=trigger,${Object.entries(taskContext.attributes)
+-              .map(([key, value]) => `${key}=${value}`)
+-              .join(",")}`,
+-          },
++          env: buildPythonEnv(options.env),
+         },
+         throwOnError: false,
+       });
