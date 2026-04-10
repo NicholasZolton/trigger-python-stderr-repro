@@ -1,6 +1,6 @@
 --- a/packages/python/src/index.ts	2026-04-10 17:14:30
-+++ b/packages/python/src/index.ts	2026-04-10 17:16:00
-@@ -15,12 +15,38 @@
++++ b/packages/python/src/index.ts	2026-04-10 17:44:41
+@@ -15,32 +15,66 @@
    env?: { [key: string]: string | undefined };
  };
  
@@ -13,6 +13,23 @@
 + * stderr is a blocking IPC socket with a ~208 KB buffer — exceeding that limit
 + * permanently deadlocks the subprocess.
 + */
++/**
++ * Eagerly start draining stdout/stderr from a tinyexec process.
++ *
++ * tinyexec defers `readStream()` until `_waitForOutput()` which only runs
++ * when the caller `await`s the result.  Between `spawn()` and that first
++ * `await` there is a microtask gap during which the subprocess can fill the
++ * pipe buffer (~64 KB on Linux) and block permanently.  Calling `.resume()`
++ * puts each stream into flowing mode so the kernel buffer is drained
++ * immediately, preventing the deadlock.
++ */
++function eagerDrain(proc: Result): Result {
++  const cp = proc.process;
++  cp?.stdout?.resume();
++  cp?.stderr?.resume();
++  return proc;
++}
++
 +function buildPythonEnv(userEnv?: { [key: string]: string | undefined }): NodeJS.ProcessEnv {
 +  const carrier = carrierFromContext();
 +
@@ -41,7 +58,8 @@
      return await logger.trace(
        "python.run()",
        async (span) => {
-@@ -28,16 +54,7 @@
+-        const result = await x(pythonBin, scriptArgs, {
++        const result = await eagerDrain(x(pythonBin, scriptArgs, {
            ...options,
            nodeOptions: {
              ...(options.nodeOptions || {}),
@@ -58,17 +76,22 @@
 +            env: buildPythonEnv(options.env),
            },
            throwOnError: false, // Ensure errors are handled manually
-         });
-@@ -79,8 +96,6 @@
+-        });
++        }));
+ 
+         if (result.exitCode) {
+           span.setAttribute("exitCode", result.exitCode);
+@@ -79,30 +113,18 @@
        async (span) => {
          span.setAttribute("scriptPath", scriptPath);
  
 -        const carrier = carrierFromContext();
 -
-         const result = await x(
+-        const result = await x(
++        const result = await eagerDrain(x(
            process.env.PYTHON_BIN_PATH || "python",
            [scriptPath, ...scriptArgs],
-@@ -88,17 +103,7 @@
+           {
              ...options,
              nodeOptions: {
                ...(options.nodeOptions || {}),
@@ -87,14 +110,20 @@
              },
              throwOnError: false,
            }
-@@ -143,23 +148,12 @@
+-        );
++        ));
+ 
+         if (result.exitCode) {
+           span.setAttribute("exitCode", result.exitCode);
+@@ -143,26 +165,15 @@
            async (tempFilePath) => {
              span.setAttribute("tempFilePath", tempFilePath);
  
 -            const carrier = carrierFromContext();
 -
              const pythonBin = process.env.PYTHON_BIN_PATH || "python";
-             const result = await x(pythonBin, [tempFilePath], {
+-            const result = await x(pythonBin, [tempFilePath], {
++            const result = await eagerDrain(x(pythonBin, [tempFilePath], {
                ...options,
                nodeOptions: {
                  ...(options.nodeOptions || {}),
@@ -111,14 +140,19 @@
 +                env: buildPythonEnv(options.env),
                },
                throwOnError: false,
-             });
-@@ -194,22 +188,11 @@
+-            });
++            }));
+ 
+             if (result.exitCode) {
+               span.setAttribute("exitCode", result.exitCode);
+@@ -194,25 +205,14 @@
      run(scriptArgs: string[] = [], options: PythonExecOptions = {}): AsyncIterableStream<string> {
        const pythonBin = process.env.PYTHON_BIN_PATH || "python";
  
 -      const carrier = carrierFromContext();
 -
-       const pythonProcess = x(pythonBin, scriptArgs, {
+-      const pythonProcess = x(pythonBin, scriptArgs, {
++      const pythonProcess = eagerDrain(x(pythonBin, scriptArgs, {
          ...options,
          nodeOptions: {
            ...(options.nodeOptions || {}),
@@ -135,14 +169,19 @@
 +          env: buildPythonEnv(options.env),
          },
          throwOnError: false,
-       });
-@@ -241,22 +224,11 @@
+-      });
++      }));
+ 
+       const span = logger.startSpan("python.stream.run()", {
+         attributes: {
+@@ -241,25 +241,14 @@
  
        const pythonBin = process.env.PYTHON_BIN_PATH || "python";
  
 -      const carrier = carrierFromContext();
 -
-       const pythonProcess = x(pythonBin, [scriptPath, ...scriptArgs], {
+-      const pythonProcess = x(pythonBin, [scriptPath, ...scriptArgs], {
++      const pythonProcess = eagerDrain(x(pythonBin, [scriptPath, ...scriptArgs], {
          ...options,
          nodeOptions: {
            ...(options.nodeOptions || {}),
@@ -159,14 +198,19 @@
 +          env: buildPythonEnv(options.env),
          },
          throwOnError: false,
-       });
-@@ -286,22 +258,11 @@
+-      });
++      }));
+ 
+       const span = logger.startSpan("python.stream.runScript()", {
+         attributes: {
+@@ -286,25 +275,14 @@
  
        const pythonScriptPath = createTempFileSync(`script_${Date.now()}.py`, scriptContent);
  
 -      const carrier = carrierFromContext();
 -
-       const pythonProcess = x(pythonBin, [pythonScriptPath], {
+-      const pythonProcess = x(pythonBin, [pythonScriptPath], {
++      const pythonProcess = eagerDrain(x(pythonBin, [pythonScriptPath], {
          ...options,
          nodeOptions: {
            ...(options.nodeOptions || {}),
@@ -183,4 +227,8 @@
 +          env: buildPythonEnv(options.env),
          },
          throwOnError: false,
-       });
+-      });
++      }));
+ 
+       const span = logger.startSpan("python.stream.runInline()", {
+         attributes: {
