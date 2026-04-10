@@ -1,0 +1,13 @@
+{
+  "name": "trigger-python-stderr-repro",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Reproduces python.runScript() stderr deadlock in @trigger.dev/python",
+  "dependencies": {
+    "@trigger.dev/python": "^4.4.3",
+    "@trigger.dev/sdk": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}
